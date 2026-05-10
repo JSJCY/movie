@@ -1,0 +1,40 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: movie-gateway
+  cloud:
+    nacos:
+      discovery:
+        server-addr: localhost:8848
+        username: nacos
+        password: nacos
+    gateway:
+      routes:
+        - id: user-service
+          uri: lb://movie-user
+          predicates:
+            - Path=/api/auth/**, /api/users/**, /api/admin/**
+        - id: movie-service
+          uri: lb://movie-movie
+          predicates:
+            - Path=/api/movies/**, /api/categories/**, /api/actors/**, /api/directors/**
+        - id: review-service
+          uri: lb://movie-review
+          predicates:
+            - Path=/api/reviews/**
+        - id: watchlist-service
+          uri: lb://movie-watchlist
+          predicates:
+            - Path=/api/watchlist/**
+        - id: ranking-service
+          uri: lb://movie-ranking
+          predicates:
+            - Path=/api/rankings/**
+      default-filters:
+        - DedupeResponseHeader=Access-Control-Allow-Origin
+
+logging:
+  level:
+    com.movie.gateway: DEBUG

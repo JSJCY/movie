@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c \"import bcrypt; print\\(bcrypt.hashpw\\(b'admin123', bcrypt.gensalt\\(\\)\\).decode\\(\\)\\)\")",
+      "Bash(python -c \"import bcrypt; print\\(bcrypt.hashpw\\(b'admin123', bcrypt.gensalt\\(\\)\\).decode\\(\\)\\)\")",
+      "Bash(docker exec movie-mysql-user *)",
+      "Bash(docker exec *)",
+      "Bash(mvn clean *)",
+      "Bash(nohup java -jar /d/code/movie/movie-parent/movie-movie/target/movie-movie-1.0.0-SNAPSHOT.jar)",
+      "Bash(echo \"PID=$!\")",
+      "Bash(nohup java -jar /d/code/movie/movie-parent/movie-review/target/movie-review-1.0.0-SNAPSHOT.jar)",
+      "Bash(nohup java -jar /d/code/movie/movie-parent/movie-watchlist/target/movie-watchlist-1.0.0-SNAPSHOT.jar)",
+      "Bash(nohup java -jar /d/code/movie/movie-parent/movie-user/target/movie-user-1.0.0-SNAPSHOT.jar)",
+      "Bash(echo \"movie-user PID=$!\")",
+      "Bash(echo \"movie PID=$!\")",
+      "Bash(curl *)"
+    ]
+  }
+}
