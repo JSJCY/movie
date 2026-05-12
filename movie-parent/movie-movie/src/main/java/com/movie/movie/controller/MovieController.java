@@ -30,6 +30,11 @@ public class MovieController {
         return ApiResponse.ok(PageResult.of(result.getTotal(), result.getCurrent(), result.getSize(), result.getRecords()));
     }
 
+    @GetMapping("/batch")
+    public ApiResponse<List<MovieBriefVO>> getBriefs(@RequestParam List<Long> ids) {
+        return ApiResponse.ok(movieService.getMovieBriefs(ids));
+    }
+
     @GetMapping("/search")
     public ApiResponse<List<MovieVO>> search(@RequestParam String q) {
         List<MovieVO> movies = movieService.fullTextSearch(q);
@@ -58,5 +63,10 @@ public class MovieController {
     public ApiResponse<Void> delete(@PathVariable Long id) {
         movieService.deleteMovie(id);
         return ApiResponse.ok();
+    }
+
+    @PostMapping("/import/tmdb/{tmdbId}")
+    public ApiResponse<MovieVO> importFromTmdb(@PathVariable Long tmdbId) {
+        return ApiResponse.ok(movieService.importFromTmdb(tmdbId));
     }
 }

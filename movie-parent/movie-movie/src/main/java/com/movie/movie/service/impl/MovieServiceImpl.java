@@ -12,10 +12,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
-import java.util.ArrayList;
+import java.time.LocalDate;
 import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.web.client.RestTemplate;
 
 @Service
 @RequiredArgsConstructor
@@ -28,6 +31,17 @@ public class MovieServiceImpl implements MovieService {
     private final MovieCategoryRepository movieCategoryRepository;
     private final MovieActorRepository movieActorRepository;
     private final MovieDirectorRepository movieDirectorRepository;
+    private final RestTemplate restTemplate;
+    private final ObjectMapper objectMapper;
+
+    @Value("${tmdb.api-key}")
+    private String tmdbApiKey;
+
+    @Value("${tmdb.base-url}")
+    private String tmdbBaseUrl;
+
+    @Value("${tmdb.image-base-url}")
+    private String tmdbImageBaseUrl;
 
     // ==================== 电影 ====================
 
@@ -318,7 +332,154 @@ public class MovieServiceImpl implements MovieService {
         return movie;
     }
 
+
     // ==================== 内部方法 ====================
+
+    @Override
+    @Transactional
+    public MovieVO importFromTmdb(Long tmdbId) {
+        // 1. 获取 TMDB 电影详情和演职员
+        JsonNode movieData = fetchTmdb("/movie/" + tmdbId + "?language=zh-CN");
+        JsonNode creditsData = fetchTmdb("/movie/" + tmdbId + "/credits?language=zh-CN");
+
+        // 2. 构建电影实体
+        Movie movie = new Movie();
+        movie.setTitle(getText(movieData, "title"));
+        movie.setOriginalTitle(getText(movieData, "original_title"));
+        String releaseDate = getText(movieData, "release_date");
+        if (releaseDate != null) movie.setReleaseDate(LocalDate.parse(releaseDate));
+        JsonNode runtime = movieData.get("runtime");
+        if (runtime != null && !runtime.isNull()) movie.setDuration(runtime.asInt());
+        JsonNode countries = movieData.get("production_countries");
+        if (countries != null && countries.isArray() && countries.size() > 0) {
+            movie.setCountry(countries.get(0).get("name").asText());
+        }
+        movie.setLanguage(getText(movieData, "original_language"));
+        movie.setDescription(getText(movieData, "overview"));
+        String posterPath = getText(movieData, "poster_path");
+        if (posterPath != null) {
+            movie.setPosterUrl(tmdbImageBaseUrl + posterPath);
+        }
+        movie.setStatus(1);
+        movieRepository.insert(movie);
+
+        // 3. 分类（TMDB genres）
+        JsonNode genres = movieData.get("genres");
+        if (genres != null) {
+            for (JsonNode genre : genres) {
+                String name = genre.get("name").asText();
+                MovieCategory mc = new MovieCategory();
+                mc.setMovieId(movie.getId());
+                mc.setCategoryId(findOrCreateCategory(name).getId());
+                movieCategoryRepository.insert(mc);
+            }
+        }
+
+        // 4. 演员（前 10 位）
+        JsonNode cast = creditsData.get("cast");
+        if (cast != null) {
+            int count = 0;
+            for (JsonNode member : cast) {
+                if (count >= 10) break;
+                String name = member.get("name").asText();
+                String character = member.has("character") && !member.get("character").isNull()
+                        ? member.get("character").asText() : "";
+                String profilePath = getText(member, "profile_path");
+                MovieActor ma = new MovieActor();
+                ma.setMovieId(movie.getId());
+                ma.setActorId(findOrCreateActor(name, profilePath).getId());
+                ma.setCharacterName(character);
+                movieActorRepository.insert(ma);
+                count++;
+            }
+        }
+
+        // 5. 导演
+        JsonNode crew = creditsData.get("crew");
+        if (crew != null) {
+            for (JsonNode member : crew) {
+                if ("Director".equals(getText(member, "job"))) {
+                    String name = member.get("name").asText();
+                    String profilePath = getText(member, "profile_path");
+                    MovieDirector md = new MovieDirector();
+                    md.setMovieId(movie.getId());
+                    md.setDirectorId(findOrCreateDirector(name, profilePath).getId());
+                    movieDirectorRepository.insert(md);
+                }
+            }
+        }
+
+        return toMovieVO(movie);
+    }
+
+    private JsonNode fetchTmdb(String path) {
+        String url = tmdbBaseUrl + path + "&api_key=" + tmdbApiKey;
+        try {
+            String json = restTemplate.getForObject(url, String.class);
+            return objectMapper.readTree(json);
+        } catch (Exception e) {
+            throw new BusinessException(500, "TMDB API 调用失败: " + e.getMessage());
+        }
+    }
+
+    private String getText(JsonNode node, String field) {
+        JsonNode value = node.get(field);
+        return value != null && !value.isNull() ? value.asText() : null;
+    }
+
+    private Category findOrCreateCategory(String name) {
+        Category cat = categoryRepository.selectOne(
+                new LambdaQueryWrapper<Category>().eq(Category::getName, name));
+        if (cat == null) {
+            cat = new Category();
+            cat.setName(name);
+            categoryRepository.insert(cat);
+        }
+        return cat;
+    }
+
+    private Actor findOrCreateActor(String name, String profilePath) {
+        Actor actor = actorRepository.selectOne(
+                new LambdaQueryWrapper<Actor>().eq(Actor::getName, name));
+        if (actor == null) {
+            actor = new Actor();
+            actor.setName(name);
+            if (profilePath != null) {
+                actor.setAvatarUrl("https://image.tmdb.org/t/p/w200" + profilePath);
+            }
+            actorRepository.insert(actor);
+        }
+        return actor;
+    }
+
+    private Director findOrCreateDirector(String name, String profilePath) {
+        Director director = directorRepository.selectOne(
+                new LambdaQueryWrapper<Director>().eq(Director::getName, name));
+        if (director == null) {
+            director = new Director();
+            director.setName(name);
+            if (profilePath != null) {
+                director.setAvatarUrl("https://image.tmdb.org/t/p/w200" + profilePath);
+            }
+            directorRepository.insert(director);
+        }
+        return director;
+    }
+
+    @Override
+    public List<MovieBriefVO> getMovieBriefs(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        return movieRepository.selectBatchIds(ids).stream()
+                .map(m -> MovieBriefVO.builder()
+                        .id(m.getId())
+                        .title(m.getTitle())
+                        .posterUrl(m.getPosterUrl())
+                        .averageRating(m.getAverageRating())
+                        .build())
+                .toList();
+    }
 
     private MovieVO toMovieVO(Movie movie) {
         // 分类

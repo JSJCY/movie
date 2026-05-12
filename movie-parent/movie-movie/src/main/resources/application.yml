@@ -24,6 +24,11 @@ mybatis-plus:
     db-config:
       id-type: auto
 
+tmdb:
+  api-key: aa62bd3ea4193fada85b63f9e7cae44b
+  base-url: https://api.themoviedb.org/3
+  image-base-url: https://image.tmdb.org/t/p/w500
+
 logging:
   level:
     com.movie.movie: DEBUG

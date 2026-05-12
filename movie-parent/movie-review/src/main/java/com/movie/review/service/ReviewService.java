@@ -12,4 +12,5 @@ public interface ReviewService {
     void likeReview(Long userId, Long reviewId);
     void unlikeReview(Long userId, Long reviewId);
     ReviewStatsVO getMovieStats(Long movieId);
+    ReviewStatsVO getMovieStats(Long movieId, java.time.LocalDate startDate, java.time.LocalDate endDate);
 }

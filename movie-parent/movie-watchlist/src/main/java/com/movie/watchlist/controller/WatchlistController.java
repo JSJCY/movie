@@ -7,7 +7,10 @@ import com.movie.watchlist.dto.*;
 import com.movie.watchlist.service.WatchlistService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.*;
+
+import java.time.LocalDate;
 
 @RestController
 @RequestMapping("/api/watchlist")
@@ -66,5 +69,13 @@ public class WatchlistController {
             @PathVariable Long movieId) {
         WatchRecordVO status = watchlistService.getMyStatus(userId, movieId);
         return ApiResponse.ok(status);
+    }
+
+    @GetMapping("/movie/{movieId}/watch-count")
+    public ApiResponse<Integer> getWatchCount(
+            @PathVariable Long movieId,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
+        return ApiResponse.ok(watchlistService.getWatchCount(movieId, startDate, endDate));
     }
 }

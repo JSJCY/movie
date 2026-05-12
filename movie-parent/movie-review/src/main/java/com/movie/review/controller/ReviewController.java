@@ -7,7 +7,10 @@ import com.movie.review.dto.*;
 import com.movie.review.service.ReviewService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.*;
+
+import java.time.LocalDate;
 
 @RestController
 @RequestMapping("/api/reviews")
@@ -79,8 +82,13 @@ public class ReviewController {
     }
 
     @GetMapping("/movie/{movieId}/stats")
-    public ApiResponse<ReviewStatsVO> getStats(@PathVariable Long movieId) {
-        ReviewStatsVO stats = reviewService.getMovieStats(movieId);
+    public ApiResponse<ReviewStatsVO> getStats(
+            @PathVariable Long movieId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
+        ReviewStatsVO stats = startDate != null && endDate != null
+                ? reviewService.getMovieStats(movieId, startDate, endDate)
+                : reviewService.getMovieStats(movieId);
         return ApiResponse.ok(stats);
     }
 }

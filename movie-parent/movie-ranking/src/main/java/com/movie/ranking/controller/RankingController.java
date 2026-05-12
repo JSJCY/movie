@@ -28,4 +28,16 @@ public class RankingController {
         List<RankingVO> rankings = rankingService.getMonthlyRanking(period);
         return ApiResponse.ok(rankings);
     }
+
+    @PostMapping("/calculate/weekly")
+    public ApiResponse<String> triggerWeekly() {
+        rankingService.calculateWeeklyRanking();
+        return ApiResponse.ok("周排行榜计算完成");
+    }
+
+    @PostMapping("/calculate/monthly")
+    public ApiResponse<String> triggerMonthly() {
+        rankingService.calculateMonthlyRanking();
+        return ApiResponse.ok("月排行榜计算完成");
+    }
 }

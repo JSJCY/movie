@@ -47,7 +47,8 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
         if (exchange.getRequest().getMethod() == HttpMethod.GET
                 && !path.startsWith("/api/admin")
                 && !path.startsWith("/api/users/me")
-                && !path.startsWith("/api/watchlist/me")) {
+                && !path.startsWith("/api/watchlist/me")
+                && !(path.startsWith("/api/watchlist/movie/") && path.endsWith("/my-status"))) {
             return chain.filter(exchange);
         }
 

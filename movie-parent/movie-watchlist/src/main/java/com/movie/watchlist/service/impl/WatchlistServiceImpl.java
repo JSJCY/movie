@@ -11,13 +11,24 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.web.client.RestTemplate;
 
 @Service
 @RequiredArgsConstructor
 public class WatchlistServiceImpl implements WatchlistService {
 
     private final WatchRecordRepository watchRecordRepository;
+    private final RestTemplate restTemplate;
+    private final ObjectMapper objectMapper;
 
     @Override
     public Page<WatchRecordVO> listMyWatchlist(Long userId, String status, long page, long size) {
@@ -30,9 +41,12 @@ public class WatchlistServiceImpl implements WatchlistService {
 
         Page<WatchRecord> recordPage = watchRecordRepository.selectPage(new Page<>(page, size), wrapper);
 
+        List<WatchRecordVO> vos = recordPage.getRecords().stream().map(this::toVO).toList();
+        enrichMovieInfo(vos);
+
         Page<WatchRecordVO> voPage = new Page<>(page, size);
         voPage.setTotal(recordPage.getTotal());
-        voPage.setRecords(recordPage.getRecords().stream().map(this::toVO).toList());
+        voPage.setRecords(vos);
         return voPage;
     }
 
@@ -45,9 +59,12 @@ public class WatchlistServiceImpl implements WatchlistService {
 
         Page<WatchRecord> recordPage = watchRecordRepository.selectPage(new Page<>(page, size), wrapper);
 
+        List<WatchRecordVO> vos = recordPage.getRecords().stream().map(this::toVO).toList();
+        enrichMovieInfo(vos);
+
         Page<WatchRecordVO> voPage = new Page<>(page, size);
         voPage.setTotal(recordPage.getTotal());
-        voPage.setRecords(recordPage.getRecords().stream().map(this::toVO).toList());
+        voPage.setRecords(vos);
         return voPage;
     }
 
@@ -74,7 +91,9 @@ public class WatchlistServiceImpl implements WatchlistService {
         }
 
         watchRecordRepository.insert(record);
-        return toVO(record);
+        WatchRecordVO vo = toVO(record);
+        enrichMovieInfo(List.of(vo));
+        return vo;
     }
 
     @Override
@@ -99,7 +118,9 @@ public class WatchlistServiceImpl implements WatchlistService {
         }
 
         watchRecordRepository.updateById(record);
-        return toVO(record);
+        WatchRecordVO vo = toVO(record);
+        enrichMovieInfo(List.of(vo));
+        return vo;
     }
 
     @Override
@@ -116,13 +137,70 @@ public class WatchlistServiceImpl implements WatchlistService {
     }
 
     @Override
+    public Integer getWatchCount(Long movieId, LocalDate startDate, LocalDate endDate) {
+        Integer count = watchRecordRepository.getWatchCountByDate(movieId, startDate, endDate);
+        return count != null ? count : 0;
+    }
+
+    @Override
     public WatchRecordVO getMyStatus(Long userId, Long movieId) {
         WatchRecord record = watchRecordRepository.selectOne(
                 new LambdaQueryWrapper<WatchRecord>()
                         .eq(WatchRecord::getUserId, userId)
                         .eq(WatchRecord::getMovieId, movieId));
-        return record != null ? toVO(record) : null;
+        if (record == null) return null;
+        WatchRecordVO vo = toVO(record);
+        enrichMovieInfo(List.of(vo));
+        return vo;
     }
+
+    // ==================== 内部方法 ====================
+
+    private void enrichMovieInfo(List<WatchRecordVO> vos) {
+        if (vos.isEmpty()) return;
+
+        List<Long> movieIds = vos.stream()
+                .map(WatchRecordVO::getMovieId)
+                .distinct()
+                .toList();
+
+        Map<Long, MovieBrief> briefMap = fetchMovieBriefs(movieIds);
+
+        for (WatchRecordVO vo : vos) {
+            MovieBrief brief = briefMap.get(vo.getMovieId());
+            if (brief != null) {
+                vo.setMovieTitle(brief.title);
+                vo.setMoviePoster(brief.posterUrl);
+            }
+        }
+    }
+
+    private Map<Long, MovieBrief> fetchMovieBriefs(List<Long> movieIds) {
+        try {
+            String idsParam = movieIds.stream().map(String::valueOf).collect(Collectors.joining(","));
+            String url = "http://movie-movie/api/movies/batch?ids=" + idsParam;
+            String json = restTemplate.getForObject(url, String.class);
+            JsonNode root = objectMapper.readTree(json);
+            if (root.get("code").asInt() != 200 || root.get("data").isNull()) {
+                return Map.of();
+            }
+
+            Map<Long, MovieBrief> map = new HashMap<>();
+            for (JsonNode node : root.get("data")) {
+                Long id = node.get("id").asLong();
+                String title = node.has("title") && !node.get("title").isNull()
+                        ? node.get("title").asText() : null;
+                String posterUrl = node.has("posterUrl") && !node.get("posterUrl").isNull()
+                        ? node.get("posterUrl").asText() : null;
+                map.put(id, new MovieBrief(title, posterUrl));
+            }
+            return map;
+        } catch (Exception e) {
+            return Map.of();
+        }
+    }
+
+    private record MovieBrief(String title, String posterUrl) {}
 
     private WatchRecordVO toVO(WatchRecord record) {
         return WatchRecordVO.builder()

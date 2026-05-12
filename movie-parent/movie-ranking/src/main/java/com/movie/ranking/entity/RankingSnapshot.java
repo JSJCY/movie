@@ -22,6 +22,7 @@ public class RankingSnapshot {
 
     private Long movieId;
 
+    @TableField("`rank`")
     private Integer rank;
 
     private BigDecimal avgRating;

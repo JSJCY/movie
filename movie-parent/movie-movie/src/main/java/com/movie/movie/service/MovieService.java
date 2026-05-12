@@ -32,6 +32,10 @@ public interface MovieService {
     Director updateDirector(Long id, DirectorCreateRequest request);
     void deleteDirector(Long id);
 
+    // TMDB 导入
+    MovieVO importFromTmdb(Long tmdbId);
+
     // 内部调用
     Movie getById(Long id);
+    List<MovieBriefVO> getMovieBriefs(List<Long> ids);
 }

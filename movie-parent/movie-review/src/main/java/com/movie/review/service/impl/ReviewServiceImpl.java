@@ -153,18 +153,38 @@ public class ReviewServiceImpl implements ReviewService {
     public ReviewStatsVO getMovieStats(Long movieId) {
         Double avg = reviewRepository.getAverageRating(movieId);
         Integer ratingCount = reviewRepository.getRatingCount(movieId);
-        Long reviewCount = reviewRepository.selectCount(
-                new LambdaQueryWrapper<Review>()
-                        .eq(Review::getMovieId, movieId)
-                        .isNotNull(Review::getContent)
-                        .ne(Review::getContent, "")
-        );
+        Long reviewCount = getContentReviewCount(movieId, null, null);
 
         return ReviewStatsVO.builder()
-                .averageRating(BigDecimal.valueOf(avg).setScale(1, RoundingMode.HALF_UP))
+                .averageRating(avg != null ? BigDecimal.valueOf(avg).setScale(1, RoundingMode.HALF_UP) : BigDecimal.ZERO)
                 .ratingCount(ratingCount)
                 .reviewCount(reviewCount)
                 .build();
+    }
+
+    @Override
+    public ReviewStatsVO getMovieStats(Long movieId, java.time.LocalDate startDate, java.time.LocalDate endDate) {
+        Double avg = reviewRepository.getAverageRatingByDate(movieId, startDate, endDate);
+        Integer ratingCount = reviewRepository.getRatingCountByDate(movieId, startDate, endDate);
+        Long reviewCount = getContentReviewCount(movieId, startDate, endDate);
+
+        return ReviewStatsVO.builder()
+                .averageRating(avg != null ? BigDecimal.valueOf(avg).setScale(1, RoundingMode.HALF_UP) : BigDecimal.ZERO)
+                .ratingCount(ratingCount)
+                .reviewCount(reviewCount)
+                .build();
+    }
+
+    private Long getContentReviewCount(Long movieId, java.time.LocalDate startDate, java.time.LocalDate endDate) {
+        LambdaQueryWrapper<Review> wrapper = new LambdaQueryWrapper<Review>()
+                .eq(Review::getMovieId, movieId)
+                .isNotNull(Review::getContent)
+                .ne(Review::getContent, "");
+        if (startDate != null && endDate != null) {
+            wrapper.ge(Review::getCreatedAt, startDate)
+                   .lt(Review::getCreatedAt, endDate);
+        }
+        return reviewRepository.selectCount(wrapper);
     }
 
     private ReviewVO toReviewVO(Review review, Long currentUserId) {

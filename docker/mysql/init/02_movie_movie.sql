@@ -1,4 +1,6 @@
 -- movie_movie 库 - 电影服务
+SET NAMES utf8mb4;
+
 CREATE TABLE `movie` (
     `id`             BIGINT AUTO_INCREMENT PRIMARY KEY,
     `title`          VARCHAR(200) NOT NULL COMMENT '中文片名',
