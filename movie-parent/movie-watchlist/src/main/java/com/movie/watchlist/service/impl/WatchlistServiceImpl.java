@@ -2,6 +2,9 @@ package com.movie.watchlist.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.movie.common.client.MovieClient;
+import com.movie.common.dto.ApiResponse;
+import com.movie.common.dto.MovieBriefDTO;
 import com.movie.common.exception.BusinessException;
 import com.movie.watchlist.dto.*;
 import com.movie.watchlist.entity.WatchRecord;
@@ -16,19 +19,13 @@ import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
-
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.web.client.RestTemplate;
 
 @Service
 @RequiredArgsConstructor
 public class WatchlistServiceImpl implements WatchlistService {
 
     private final WatchRecordRepository watchRecordRepository;
-    private final RestTemplate restTemplate;
-    private final ObjectMapper objectMapper;
+    private final MovieClient movieClient;
 
     @Override
     public Page<WatchRecordVO> listMyWatchlist(Long userId, String status, long page, long size) {
@@ -71,7 +68,6 @@ public class WatchlistServiceImpl implements WatchlistService {
     @Override
     @Transactional
     public WatchRecordVO addRecord(Long userId, WatchRecordCreateRequest request) {
-        // 检查是否已有记录
         WatchRecord existing = watchRecordRepository.selectOne(
                 new LambdaQueryWrapper<WatchRecord>()
                         .eq(WatchRecord::getUserId, userId)
@@ -177,22 +173,14 @@ public class WatchlistServiceImpl implements WatchlistService {
 
     private Map<Long, MovieBrief> fetchMovieBriefs(List<Long> movieIds) {
         try {
-            String idsParam = movieIds.stream().map(String::valueOf).collect(Collectors.joining(","));
-            String url = "http://movie-movie/api/movies/batch?ids=" + idsParam;
-            String json = restTemplate.getForObject(url, String.class);
-            JsonNode root = objectMapper.readTree(json);
-            if (root.get("code").asInt() != 200 || root.get("data").isNull()) {
+            ApiResponse<List<MovieBriefDTO>> resp = movieClient.getMovieBriefs(movieIds);
+            if (resp == null || resp.getCode() != 200 || resp.getData() == null) {
                 return Map.of();
             }
 
             Map<Long, MovieBrief> map = new HashMap<>();
-            for (JsonNode node : root.get("data")) {
-                Long id = node.get("id").asLong();
-                String title = node.has("title") && !node.get("title").isNull()
-                        ? node.get("title").asText() : null;
-                String posterUrl = node.has("posterUrl") && !node.get("posterUrl").isNull()
-                        ? node.get("posterUrl").asText() : null;
-                map.put(id, new MovieBrief(title, posterUrl));
+            for (MovieBriefDTO dto : resp.getData()) {
+                map.put(dto.getId(), new MovieBrief(dto.getTitle(), dto.getPosterUrl()));
             }
             return map;
         } catch (Exception e) {

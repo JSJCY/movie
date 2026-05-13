@@ -1,9 +1,13 @@
 package com.movie.common.dto;
 
+import lombok.AccessLevel;
 import lombok.Data;
+import lombok.NoArgsConstructor;
+
 import java.util.List;
 
 @Data
+@NoArgsConstructor(access = AccessLevel.PRIVATE)
 public class PageResult<T> {
     private long total;
     private long page;

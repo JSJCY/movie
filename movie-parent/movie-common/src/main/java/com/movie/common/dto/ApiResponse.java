@@ -1,8 +1,11 @@
 package com.movie.common.dto;
 
+import lombok.AccessLevel;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 @Data
+@NoArgsConstructor(access = AccessLevel.PRIVATE)
 public class ApiResponse<T> {
     private int code;
     private String message;

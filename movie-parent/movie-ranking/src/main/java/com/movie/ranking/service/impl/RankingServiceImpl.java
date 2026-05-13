@@ -1,8 +1,14 @@
 package com.movie.ranking.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.movie.common.client.MovieClient;
+import com.movie.common.client.ReviewClient;
+import com.movie.common.client.WatchlistClient;
+import com.movie.common.dto.ApiResponse;
+import com.movie.common.dto.MovieBriefDTO;
+import com.movie.common.dto.MovieSummaryDTO;
+import com.movie.common.dto.PageResult;
+import com.movie.common.dto.ReviewStatsDTO;
 import com.movie.common.exception.BusinessException;
 import com.movie.ranking.dto.RankingVO;
 import com.movie.ranking.entity.RankingSnapshot;
@@ -12,7 +18,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.client.RestTemplate;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -25,7 +30,6 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -36,8 +40,9 @@ public class RankingServiceImpl implements RankingService {
     private static final int TOP_N = 50;
 
     private final RankingSnapshotRepository rankingSnapshotRepository;
-    private final RestTemplate restTemplate;
-    private final ObjectMapper objectMapper;
+    private final MovieClient movieClient;
+    private final ReviewClient reviewClient;
+    private final WatchlistClient watchlistClient;
 
     @Override
     public List<RankingVO> getWeeklyRanking(String period) {
@@ -86,20 +91,17 @@ public class RankingServiceImpl implements RankingService {
         LocalDate periodEnd = today.with(DayOfWeek.SUNDAY);
         LocalDate periodStart = periodEnd.minusDays(6);
 
-        // 下游 API 使用 exclusive end date
         LocalDate apiStart = periodStart;
         LocalDate apiEnd = periodEnd.plusDays(1);
 
         List<MovieStat> stats = fetchAllMovieStats(apiStart, apiEnd);
         List<RankingSnapshot> snapshots = buildSnapshots(stats, "WEEKLY", periodStart, periodEnd);
 
-        // 删除旧快照
         rankingSnapshotRepository.delete(
                 new LambdaQueryWrapper<RankingSnapshot>()
                         .eq(RankingSnapshot::getPeriodType, "WEEKLY")
                         .eq(RankingSnapshot::getPeriodEnd, periodEnd));
 
-        // 批量插入新快照
         for (RankingSnapshot s : snapshots) {
             rankingSnapshotRepository.insert(s);
         }
@@ -115,20 +117,17 @@ public class RankingServiceImpl implements RankingService {
         LocalDate periodEnd = ym.atEndOfMonth();
         LocalDate periodStart = ym.atDay(1);
 
-        // 下游 API 使用 exclusive end date
         LocalDate apiStart = periodStart;
         LocalDate apiEnd = periodEnd.plusDays(1);
 
         List<MovieStat> stats = fetchAllMovieStats(apiStart, apiEnd);
         List<RankingSnapshot> snapshots = buildSnapshots(stats, "MONTHLY", periodStart, periodEnd);
 
-        // 删除旧快照
         rankingSnapshotRepository.delete(
                 new LambdaQueryWrapper<RankingSnapshot>()
                         .eq(RankingSnapshot::getPeriodType, "MONTHLY")
                         .eq(RankingSnapshot::getPeriodEnd, periodEnd));
 
-        // 批量插入新快照
         for (RankingSnapshot s : snapshots) {
             rankingSnapshotRepository.insert(s);
         }
@@ -139,7 +138,6 @@ public class RankingServiceImpl implements RankingService {
     // ==================== 内部方法 ====================
 
     private List<MovieStat> fetchAllMovieStats(LocalDate startDate, LocalDate endDate) {
-        // 1. 获取所有电影 ID
         List<Long> movieIds = fetchAllMovieIds();
         if (movieIds.isEmpty()) {
             log.warn("没有找到任何电影");
@@ -169,33 +167,25 @@ public class RankingServiceImpl implements RankingService {
 
     private List<Long> fetchAllMovieIds() {
         try {
-            // 先获取总数
-            String countUrl = "http://movie-movie/api/movies?page=1&size=1";
-            String countJson = restTemplate.getForObject(countUrl, String.class);
-            JsonNode countRoot = objectMapper.readTree(countJson);
-            if (countRoot.get("code").asInt() != 200) {
-                log.error("获取电影总数失败: {}", countJson);
+            ApiResponse<PageResult<MovieSummaryDTO>> countResp = movieClient.listMovies(1, 1);
+            if (countResp == null || countResp.getCode() != 200 || countResp.getData() == null) {
+                log.error("获取电影总数失败");
                 return List.of();
             }
-            long total = countRoot.get("data").get("total").asLong();
+            long total = countResp.getData().getTotal();
             if (total == 0) {
                 return List.of();
             }
 
-            // 获取全部电影
-            String allUrl = "http://movie-movie/api/movies?page=1&size=" + total;
-            String allJson = restTemplate.getForObject(allUrl, String.class);
-            JsonNode allRoot = objectMapper.readTree(allJson);
-            if (allRoot.get("code").asInt() != 200) {
-                log.error("获取电影列表失败: {}", allJson);
+            ApiResponse<PageResult<MovieSummaryDTO>> allResp = movieClient.listMovies(1, total);
+            if (allResp == null || allResp.getCode() != 200 || allResp.getData() == null) {
+                log.error("获取电影列表失败");
                 return List.of();
             }
 
-            List<Long> ids = new ArrayList<>();
-            for (JsonNode node : allRoot.get("data").get("records")) {
-                ids.add(node.get("id").asLong());
-            }
-            return ids;
+            return allResp.getData().getRecords().stream()
+                    .map(MovieSummaryDTO::getId)
+                    .toList();
         } catch (Exception e) {
             log.error("获取电影列表异常", e);
             return List.of();
@@ -203,16 +193,11 @@ public class RankingServiceImpl implements RankingService {
     }
 
     private BigDecimal fetchReviewAvg(Long movieId, LocalDate startDate, LocalDate endDate) {
-        String url = String.format(
-                "http://movie-review/api/reviews/movie/%d/stats?startDate=%s&endDate=%s",
-                movieId, startDate, endDate);
         try {
-            String json = restTemplate.getForObject(url, String.class);
-            JsonNode root = objectMapper.readTree(json);
-            if (root.get("code").asInt() == 200 && !root.get("data").isNull()) {
-                JsonNode avgNode = root.get("data").get("averageRating");
-                return avgNode != null && !avgNode.isNull()
-                        ? new BigDecimal(avgNode.asText())
+            ApiResponse<ReviewStatsDTO> resp = reviewClient.getStats(movieId, startDate, endDate);
+            if (resp != null && resp.getCode() == 200 && resp.getData() != null) {
+                return resp.getData().getAverageRating() != null
+                        ? resp.getData().getAverageRating()
                         : BigDecimal.ZERO;
             }
         } catch (Exception e) {
@@ -222,15 +207,12 @@ public class RankingServiceImpl implements RankingService {
     }
 
     private Integer fetchReviewCount(Long movieId, LocalDate startDate, LocalDate endDate) {
-        String url = String.format(
-                "http://movie-review/api/reviews/movie/%d/stats?startDate=%s&endDate=%s",
-                movieId, startDate, endDate);
         try {
-            String json = restTemplate.getForObject(url, String.class);
-            JsonNode root = objectMapper.readTree(json);
-            if (root.get("code").asInt() == 200 && !root.get("data").isNull()) {
-                JsonNode countNode = root.get("data").get("ratingCount");
-                return countNode != null && !countNode.isNull() ? countNode.asInt() : 0;
+            ApiResponse<ReviewStatsDTO> resp = reviewClient.getStats(movieId, startDate, endDate);
+            if (resp != null && resp.getCode() == 200 && resp.getData() != null) {
+                return resp.getData().getRatingCount() != null
+                        ? resp.getData().getRatingCount()
+                        : 0;
             }
         } catch (Exception e) {
             log.debug("获取电影 {} 评分人数失败: {}", movieId, e.getMessage());
@@ -239,14 +221,10 @@ public class RankingServiceImpl implements RankingService {
     }
 
     private Integer fetchWatchCount(Long movieId, LocalDate startDate, LocalDate endDate) {
-        String url = String.format(
-                "http://movie-watchlist/api/watchlist/movie/%d/watch-count?startDate=%s&endDate=%s",
-                movieId, startDate, endDate);
         try {
-            String json = restTemplate.getForObject(url, String.class);
-            JsonNode root = objectMapper.readTree(json);
-            if (root.get("code").asInt() == 200 && !root.get("data").isNull()) {
-                return root.get("data").asInt();
+            ApiResponse<Integer> resp = watchlistClient.getWatchCount(movieId, startDate, endDate);
+            if (resp != null && resp.getCode() == 200 && resp.getData() != null) {
+                return resp.getData();
             }
         } catch (Exception e) {
             log.debug("获取电影 {} 观影人数失败: {}", movieId, e.getMessage());
@@ -260,7 +238,6 @@ public class RankingServiceImpl implements RankingService {
             return List.of();
         }
 
-        // 计算全局平均分 C
         BigDecimal globalSum = BigDecimal.ZERO;
         int globalCount = 0;
         for (MovieStat s : stats) {
@@ -273,23 +250,19 @@ public class RankingServiceImpl implements RankingService {
                 ? globalSum.divide(BigDecimal.valueOf(globalCount), 2, RoundingMode.HALF_UP)
                 : BigDecimal.ZERO;
 
-        // Bayesian 加权计算
         BigDecimal m = BigDecimal.valueOf(BAYESIAN_THRESHOLD_M);
         for (MovieStat s : stats) {
             BigDecimal v = BigDecimal.valueOf(s.reviewCount);
             BigDecimal R = s.avgRating;
-            // score = (v / (v + m)) * R + (m / (v + m)) * C
             BigDecimal vPlusM = v.add(m);
             BigDecimal weightV = v.divide(vPlusM, 4, RoundingMode.HALF_UP);
             BigDecimal weightM = m.divide(vPlusM, 4, RoundingMode.HALF_UP);
             s.score = R.multiply(weightV).add(C.multiply(weightM));
         }
 
-        // 按分数降序排列，取 Top N
         stats.sort(Comparator.comparing((MovieStat s) -> s.score).reversed());
         List<MovieStat> topStats = stats.size() > TOP_N ? stats.subList(0, TOP_N) : stats;
 
-        // 构建快照
         List<RankingSnapshot> snapshots = new ArrayList<>();
         for (int i = 0; i < topStats.size(); i++) {
             MovieStat s = topStats.get(i);
@@ -314,7 +287,6 @@ public class RankingServiceImpl implements RankingService {
                         .eq(RankingSnapshot::getPeriodEnd, periodEnd)
                         .orderByAsc(RankingSnapshot::getRank));
 
-        // 批量获取电影基本信息
         List<Long> movieIds = snapshots.stream()
                 .map(RankingSnapshot::getMovieId)
                 .distinct()
@@ -342,23 +314,15 @@ public class RankingServiceImpl implements RankingService {
             return Map.of();
         }
         try {
-            String idsParam = movieIds.stream().map(String::valueOf).collect(Collectors.joining(","));
-            String url = "http://movie-movie/api/movies/batch?ids=" + idsParam;
-            String json = restTemplate.getForObject(url, String.class);
-            JsonNode root = objectMapper.readTree(json);
-            if (root.get("code").asInt() != 200 || root.get("data").isNull()) {
-                log.warn("批量获取电影信息失败: {}", json);
+            ApiResponse<List<MovieBriefDTO>> resp = movieClient.getMovieBriefs(movieIds);
+            if (resp == null || resp.getCode() != 200 || resp.getData() == null) {
+                log.warn("批量获取电影信息失败");
                 return Map.of();
             }
 
             Map<Long, MovieBrief> map = new HashMap<>();
-            for (JsonNode node : root.get("data")) {
-                Long id = node.get("id").asLong();
-                String title = node.has("title") && !node.get("title").isNull()
-                        ? node.get("title").asText() : null;
-                String posterUrl = node.has("posterUrl") && !node.get("posterUrl").isNull()
-                        ? node.get("posterUrl").asText() : null;
-                map.put(id, new MovieBrief(title, posterUrl));
+            for (MovieBriefDTO dto : resp.getData()) {
+                map.put(dto.getId(), new MovieBrief(dto.getTitle(), dto.getPosterUrl()));
             }
             return map;
         } catch (Exception e) {
@@ -369,15 +333,7 @@ public class RankingServiceImpl implements RankingService {
 
     // ==================== 内部类 ====================
 
-    private static class MovieBrief {
-        final String title;
-        final String posterUrl;
-
-        MovieBrief(String title, String posterUrl) {
-            this.title = title;
-            this.posterUrl = posterUrl;
-        }
-    }
+    private record MovieBrief(String title, String posterUrl) {}
 
     private static class MovieStat {
         final Long movieId;
